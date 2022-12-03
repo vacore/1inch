@@ -1,0 +1,29 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config ONEINCH_APPS_HELLO
+	tristate "1inch Hello App"
+	default n
+	---help---
+		Enable the 1inch Hello App
+
+if ONEINCH_APPS_HELLO
+
+config ONEINCH_APPS_HELLO_PROGNAME
+	string "Program name"
+	default "oneinch_hello"
+	---help---
+		This is the name of the program that will be used when the NSH ELF
+		program is installed.
+
+config ONEINCH_APPS_HELLO_PRIORITY
+	int "1inch Hello task priority"
+	default 100
+
+config ONEINCH_APPS_HELLO_STACKSIZE
+	int "1inch Hello stack size"
+	default DEFAULT_TASK_STACKSIZE
+
+endif

@@ -1,0 +1,6 @@
+[submodule "nuttx-apps"]
+	path = workspace/nuttx-apps
+	url = https://github.com/apache/nuttx-apps.git
+[submodule "nuttx-os"]
+	path = workspace/nuttx-os
+	url = https://github.com/apache/nuttx.git

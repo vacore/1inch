@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_ONEINCH_APPS_HELLO),)
+CONFIGURED_APPS += $(APPDIR)/1inch/hello
+endif
