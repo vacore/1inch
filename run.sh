@@ -5,6 +5,9 @@ name=nuttx
 user=developer
 group=software
 
+# Patch nuttx-os
+patch --strip=1 --forward --reject-file=- --directory="$CUR/workspace/nuttx-os" <nuttx-os.patch
+
 # Create symlinks for configs and apps
 pushd "$CUR/workspace"
  ln -frs configs/sim/1inch nuttx-os/boards/sim/sim/sim/configs

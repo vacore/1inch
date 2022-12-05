@@ -6,15 +6,16 @@
 #include <sys/random.h>
 #include <unistd.h>
 
-#define MAIN_PRIO  CONFIG_ONEINCH_APPS_HELLO_PRIORITY
+#include <nuttx/spi/spi_transfer.h>
+
+#define ELOF(a) ((sizeof (a)/sizeof (a[0])))
+
 #define LIM        10  // dimensions limit of the generated matrices
 #define NTRANS     32  // number of SPI transmissions
 
 mqd_t mq_matx,  // Queue1: RNG->Matrix multiplication
       mq_spi;   // Queue2: Matrix multiplication -> SPI Send
 sem_t sem;
-
-pthread_t tid_matx, tid_mul, tid_spi;
 
 /* Multiply two matrices AA(X:Y), and BB(Y:Z), place the output into the matrix CC(X:Z) */
 void matx_mul(int16_t *AA, int16_t *BB, int64_t *CC,
@@ -35,8 +36,13 @@ void matx_mul(int16_t *AA, int16_t *BB, int64_t *CC,
 
 /* SPI sending thread - fourth to highest prio */
 void *thread_spi (void *arg) {
+	int fd = open("/dev/spi1", O_RDONLY);
+	assert (fd!=-1);
 
-	// TODO: init spi
+	pthread_cleanup_push ( ({ void _ (char *func) {
+		close(fd);
+		printf ("[%s]: done\n", func);
+	}; _; }), __func__);
 
 	struct mq_attr attr;
 	mq_getattr(mq_spi, &attr);
@@ -54,23 +60,32 @@ void *thread_spi (void *arg) {
 		}
 		putchar('\n');
 
-		// TODO: send to the spi
+		struct spi_trans_s trans = {
+			.deselect = true,
+			.nwords   = len,
+			.txbuffer = tot_buf
+		};
+		struct spi_sequence_s seq = {
+			.dev       = SPIDEV_ID(SPIDEVTYPE_USER, 0),
+			.nbits     = 8,
+			.ntrans    = 1,
+			.frequency = 4000000,
+			.trans     = &trans
+		};
+
+		int ret=ioctl (fd, SPIIOC_TRANSFER, (unsigned long)((uintptr_t)&seq));
+		assert (ret!=-1);
 
 		sem_post(&sem);
 	}
+
+	pthread_cleanup_pop (0);
 
 	return NULL;
 }
 
 /* Matrix multiplication thread - third to highest prio */
 void *thread_mul (void *arg) {
-	/* Start the spi thread */
-	pthread_attr_t tattr;
-	pthread_attr_init(&tattr);
-	pthread_attr_setschedparam(&tattr, &(struct sched_param){.sched_priority = MAIN_PRIO-1});
-
-	pthread_create(&tid_spi, &tattr, thread_spi, NULL);
-
 	struct mq_attr attr;
 	mq_getattr(mq_matx, &attr);
 
@@ -110,15 +125,6 @@ void *thread_mul (void *arg) {
 
 /* Matrix thread - second to highest prio */
 void *thread_matx (void *arg) {
-	/* Start the multiplication thread */
-	pthread_attr_t tattr;
-	pthread_attr_init(&tattr);
-	pthread_attr_setschedparam(&tattr, &(struct sched_param){.sched_priority = MAIN_PRIO-2});
-
-	pthread_create(&tid_mul, &tattr, thread_mul, NULL);
-
-	uint32_t cnt = 0;
-
 	/* This thread's task - RNG matrix data */
 	while (1) {
 		/* Generate X,Y,Z (type uint8_t [1..LIM]) */
@@ -158,9 +164,7 @@ void *thread_matx (void *arg) {
 	return NULL;
 }
 
-int main (int argc, char *argv[]) {
-	puts("Hello, 1inch World!!");
-
+void matx (void) {
 	sem_init (&sem,0,0);
 
 	struct mq_attr attr_mtx = {
@@ -179,11 +183,25 @@ int main (int argc, char *argv[]) {
 	mq_spi = mq_open("/mq_spi", O_RDWR|O_CREAT, 0666, &attr_spi);
 	assert(mq_spi != -1);
 
-	/* Start matrix thread */
 	pthread_attr_t tattr;
 	pthread_attr_init(&tattr);
-	pthread_attr_setschedparam(&tattr, &(struct sched_param){.sched_priority = MAIN_PRIO-3});
-	pthread_create(&tid_matx, &tattr, thread_matx, NULL);
+
+	pthread_t tid_matx, tid_mul, tid_spi;
+
+	#define MAIN_PRIO  CONFIG_ONEINCH_APPS_HELLO_PRIORITY
+	struct {
+		pthread_t tid;
+		void *(*f)(void*);
+		int prio;
+	} t[] = {
+		{ .f=thread_matx, .prio=MAIN_PRIO-3 },  // matrix generation thread
+		{ .f=thread_mul,  .prio=MAIN_PRIO-2 },  // multiplication thread
+		{ .f=thread_spi,  .prio=MAIN_PRIO-1 }   // spi thread
+	};
+	for (size_t i=0; i<ELOF (t); i++) {
+		pthread_attr_setschedparam(&tattr, &(struct sched_param){.sched_priority = t[i].prio});
+		pthread_create(&t[i].tid, &tattr, t[i].f, NULL);
+	}
 
 	/* Do specified amount of transmissions */
 	uint8_t cnt = 0;
@@ -191,12 +209,10 @@ int main (int argc, char *argv[]) {
 		sem_wait (&sem);
 	}
 
-	pthread_cancel(tid_spi);
-	pthread_cancel(tid_mul);
-	pthread_cancel(tid_matx);
-	pthread_join(tid_spi, NULL);
-	pthread_join(tid_mul, NULL);
-	pthread_join(tid_matx, NULL);
+	for (size_t i=0; i<ELOF (t); i++) {
+		pthread_cancel (t[i].tid);
+		pthread_join (t[i].tid,NULL);
+	}
 
 	mq_close(mq_spi);
 	mq_close(mq_matx);
@@ -204,6 +220,12 @@ int main (int argc, char *argv[]) {
 	mq_unlink("/mq_matx");
 
 	sem_destroy (&sem);
+}
+
+int main (int argc, char *argv[]) {
+	puts("Hello, 1inch World!!");
+
+	matx ();
 
 	return 0;
 }
